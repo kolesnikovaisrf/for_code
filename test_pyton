@@ -1,0 +1,55 @@
+# Чтение данных
+import pandas as pd
+file_path ='C:/test_csv.csv'
+df_ishodn = pd.read_csv(file_path, sep=';', encoding='cp1251')
+
+# Шаг 2: Преобразование времени
+df = df_ishodn[['EVENT_TIME_UTC', 'USER ID', 'TIMEATT']]
+
+# Шаг 3: Добавление даты
+df['EVENT_TIME_UTC'] = pd.to_datetime(df['EVENT_TIME_UTC'])
+df['Data'] = df['EVENT_TIME_UTC'].dt.date
+
+# Шаг 4: Разделение на "Старт" и "Конец"
+start_times = df[df['TIMEATT'] == 1].rename(columns={'EVENT_TIME_UTC': 'Start'})
+end_times = df[df['TIMEATT'] == 2].rename(columns={'EVENT_TIME_UTC': 'End'})
+
+# Шаг 5: Объединение данных
+work_log = pd.merge_asof(start_times.sort_values('Start'),
+                         end_times.sort_values('End'),
+                         by='USER ID',
+                         left_on='Start',
+                         right_on='End',
+                         direction='forward')
+
+# Шаг 6: Расчет рабочего времени
+work_log['Work_period'] = work_log['End'] - work_log['Start']
+
+# Шаг 7: Работа с переходом через полночь
+work_log['Data_Start'] = work_log['Start'].dt.date
+work_log['Data_End'] = work_log['End'].dt.date
+
+# Шаг 8: Обработка работы, пересекающей несколько дней
+work_log['Work_period_inday'] = work_log.apply(
+    lambda row: pd.Timedelta(days=1) if row['Data_Start'] != row['Data_End'] else row['Work_period'], axis=1
+)
+
+# Шаг 9: Группировка данных
+daily_work_time = work_log.groupby(['USER ID', 'Data_Start']).agg({'Work_period_inday': 'sum'}).reset_index()
+
+# Шаг 10: Преобразуем временной интервал в часы
+daily_work_time['Work_hours'] = daily_work_time['Work_period_inday'].apply(lambda x: x.total_seconds() / 3600).round(2)
+
+# Шаг 11: Готовим данные о сотрудниках для слияния с информацией о рабочих часах
+df_person = df_ishodn[['USER ID', 'N Badge', 'Emploieer','CITY', 'STATE', 'TITLE', 'DEPT', 'DIVISION']]
+df_person = df_person.drop_duplicates()
+
+# Шаг 12: Обьединяем таблицы
+daily_work_time = pd.merge(daily_work_time, df_person, on='USER ID', how='left')
+
+# Шаг 13: Сохраняем результат в csv
+# Сохраняем результат в Excel. портит формат в колонках с рабочим временем
+#daily_work_time.to_excel('C:/Users/user/Documents/daily_work_time.xlsx', index=False)
+
+# Сохраняем результат в csv
+daily_work_time.to_csv('C:/Users/user/Documents/daily_work_time.csv', index=False)
